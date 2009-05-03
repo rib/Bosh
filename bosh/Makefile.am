@@ -1,7 +1,19 @@
 
 bin_PROGRAMS = bosh
 
-bosh_SOURCES = bosh.c
+bosh_SOURCES = cli/cli-decode.c \
+	       cli/cli-setshow.c \
+	       cli/cli-utils.c \
+	       cli/symtab.c \
+	       cli/completer.c \
+	       bosh-main.c \
+	       bosh-commands.c
+
+#	       cli/cli-dump.c \
+#	       cli/cli-logging.c \
+#	       cli/cli-interp.c \
+#	       cli/cli-script.c \
+#	       cli/cli-utils.c
 
 #bosh_LDADD =
 bosh_LDFLAGS = @BOSH_DEP_LIBS@ -export-dynamic
@@ -12,6 +24,7 @@ bosh_CPPFLAGS = \
     -DBOSH_BIN_DIR=\""$(bindir)"\" \
     -I$(top_srcdir) \
     -I$(top_srcdir)/bosh \
+    -I$(top_srcdir)/bosh/cli \
     @EXTRA_CPPFLAGS@
 
 #EXTRA_DIST =

@@ -3,7 +3,7 @@ dnl Process this file with autoconf to produce a configure script.
 AC_PREREQ(2.59)
 
 AC_INIT(bosh, [0.1.0])
-AC_CONFIG_SRCDIR(bosh/bosh.c)
+AC_CONFIG_SRCDIR(bosh/bosh-main.c)
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS(config.h)
 AM_INIT_AUTOMAKE([gnu])
@@ -20,7 +20,7 @@ AC_ARG_ENABLE(debug,
   AC_HELP_STRING([--enable-debug],
     [enable debuging messages]),
   [
-   if test $enableval = yes; then 
+   if test $enableval = yes; then
 
      AC_DEFINE(_DEBUG, 1, "define to enable debuging")
 
@@ -47,12 +47,12 @@ AC_ARG_ENABLE(werror,
   AC_HELP_STRING([--enable-werror],
     [Use -Werror option for compilation]),
   [
-      if test $enableval = yes; then 
+      if test $enableval = yes; then
          EXTRA_CFLAGS="-Wall -Werror"
       else
          EXTRA_CFLAGS="-Wall"
       fi
-  ], 
+  ],
   [
    if test -z $EXTRA_CFLAGS; then
       EXTRA_CFLAGS="-Wall"
@@ -111,8 +111,13 @@ dnl ================================================================
 PKG_CHECK_MODULES(BOSH_DEP, [
 		  glib-2.0 >= 2.2
 		  gswat-0.1
+		  gobject-2.0
 ])
 
+AC_CHECK_LIB([readline], [main],
+             [BOSH_DEP_LIBS="$BOSH_DEP_LIBS -lreadline -lncurses"],
+             [AC_MSG_FAILURE([test for readline failed])],
+	     -lncurses)
 
 dnl ================================================================
 dnl Misc program dependencies.
@@ -149,7 +154,7 @@ dnl ================================================================
 dnl Dah Da!
 dnl ================================================================
 AC_OUTPUT(
-Makefile 
+Makefile
 bosh/Makefile
 dnl po/Makefile.in
 dnl bosh-0.1.0.pc

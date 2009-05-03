@@ -9,7 +9,7 @@ PKG_NAME=bosh
 (test -f $srcdir/configure.in \
   && test -f $srcdir/autogen.sh \
   && test -d $srcdir/bosh \
-  && test -f $srcdir/bosh/bosh.c) || {
+  && test -f $srcdir/bosh/bosh-main.c) || {
     echo -n "**Error**: Directory \"$srcdir\" does not look like the"
     echo " top-level $PKG_NAME directory"
     exit 1
