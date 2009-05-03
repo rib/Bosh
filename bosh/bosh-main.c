@@ -222,6 +222,64 @@ parse_args (int *argc, char ***argv)
   return session;
 }
 
+static void
+nop_log_handler (const char *log_domain,
+                 GLogLevelFlags flags,
+                 const char *message,
+                 gpointer user_data)
+{
+  return;
+}
+
+/* By default g_log will output to stdout/sterr, and since we depend on
+ * gswat which uses extensive logging it interferes with the command
+ * line interface. */
+static void
+bosh_disable_g_log (void)
+{
+  g_log_set_default_handler (nop_log_handler, NULL);
+}
+
+static void
+on_stack_change (GObject *debuggable, GParamSpec *pspec, gpointer data)
+{
+  static GQueue *stack = NULL;
+  GList *l;
+  int i;
+
+  if (stack)
+    gswat_debuggable_stack_free (stack);
+
+  g_print ("\n");
+  stack = gswat_debuggable_get_stack (GSWAT_DEBUGGABLE (debuggable));
+  for(l = stack->head, i = 0; l; l = l->next, i++)
+    {
+      GSwatDebuggableFrame *frame;
+      GSwatDebuggableFrameArgument *arg;
+      GList *l2;
+      GString *args = g_string_new ("");
+
+      frame = (GSwatDebuggableFrame *)l->data;
+
+      /* note: at this point the list is in reverse,
+       * so the last in the list is our current frame
+       */
+      g_print ("%d) %s (", i, frame->function);
+
+      for(l2 = frame->arguments; l2; l2 = l2->next)
+        {
+          arg = (GSwatDebuggableFrameArgument *)l2->data;
+          g_string_append_printf (args, "%s=%s, ", arg->name, arg->value);
+        }
+
+      if(args->str[args->len - 2] == ',')
+        args = g_string_truncate (args, args->len - 2);
+
+      g_print ("%s)\n", args->str);
+      g_string_free (args, TRUE);
+    }
+}
+
 int
 main (int argc, char **argv)
 {
@@ -239,6 +297,7 @@ main (int argc, char **argv)
 
   session = parse_args (&argc, &argv);
 
+  bosh_disable_g_log ();
   bosh_init_commands ();
 
   rl_completion_entry_function = bosh_readline_line_completion_function;
@@ -248,6 +307,12 @@ main (int argc, char **argv)
 
   if (session)
     _bosh_current_debuggable = GSWAT_DEBUGGABLE (gswat_gdb_debugger_new (session));
+
+
+  g_signal_connect (G_OBJECT (_bosh_current_debuggable),
+                    "notify::stack",
+                    G_CALLBACK (on_stack_change),
+                    NULL);
 
   g_main_loop_run (loop);
 
