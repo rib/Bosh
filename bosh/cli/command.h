@@ -166,9 +166,13 @@ void execute_cmd_post_hook (struct cmd_list_element *cmd);
 enum cmd_types cmd_type (struct cmd_list_element *cmd);
 
 
-struct cmd_list_element *lookup_cmd (char **,
-                                     struct cmd_list_element *, char *,
-                                     int, int);
+struct cmd_list_element *
+bosh_lookup_command (char **line,
+                     struct cmd_list_element *list,
+                     char *cmdtype,
+                     int ignore_help_classes,
+                     GError **error);
+
 
 struct cmd_list_element *lookup_cmd_1 (char **,
                                        struct cmd_list_element *,

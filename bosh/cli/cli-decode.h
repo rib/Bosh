@@ -20,6 +20,28 @@
 
 #include "command.h"
 
+/**
+ * BOSH_COMMAND_ERROR:
+ *
+ * #GError domain for bosh command errors
+ */
+#define BOSH_COMMAND_ERROR (bosh_command_error_quark ())
+
+/**
+ * BoshCommandError:
+ * @BOSH_COMMAND_ERROR_UNDEFINED: Undefined command
+ * @BOSH_COMMAND_ERROR_AMBIGUOUS: Ambiguous command
+ *
+ * Error enumeration for the bosh commands
+ */
+typedef enum { /*< prefix=BOSH_COMMAND_ERROR >*/
+  BOSH_COMMAND_ERROR_UNDEFINED,
+  BOSH_COMMAND_ERROR_AMBIGUOUS,
+} BoshCommandError;
+
+GQuark
+bosh_command_error_quark (void);
+
 struct re_pattern_buffer;
 
 #if 0

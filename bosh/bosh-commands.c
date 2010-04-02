@@ -22,19 +22,24 @@
 
 #include <glib.h>
 #include <glib/gi18n.h>
+#include <gio/gio.h>
 
 #include <gswat/gswat.h>
 
 #include "completer.h"
 #include "cli-decode.h"
+#include "cli-setshow.h"
 
 #include "bosh-commands.h"
 #include "bosh-main.h"
+#include "bosh-utils.h"
 
 /* Chain containing all defined commands.  */
 struct cmd_list_element *cmdlist;
 
 struct cmd_list_element *infolist;
+
+static char *last_command = NULL;
 
 /* Utility used everywhere when at least one argument is needed and
    none is supplied. */
@@ -84,6 +89,110 @@ bosh_start_command (char *command, int from_tty)
     }
 }
 
+static gboolean
+is_debuggable_interrupted (GSwatDebuggable *debuggable, char *command)
+{
+  if (!debuggable)
+    {
+      g_print ("Ignoring %s: No debugging session has been set up yet\n",
+               command);
+      return FALSE;
+    }
+  if (gswat_debuggable_get_state (debuggable)
+      != GSWAT_DEBUGGABLE_INTERRUPTED)
+    {
+      g_print ("Ignoring %s command while not interrupted\n", command);
+      return FALSE;
+    }
+  return TRUE;
+}
+
+static void
+bosh_next_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  if (!is_debuggable_interrupted (debuggable, "next"))
+    return;
+  gswat_debuggable_next (debuggable);
+}
+
+static void
+bosh_step_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  if (!is_debuggable_interrupted (debuggable, "step"))
+    return;
+  gswat_debuggable_step (debuggable);
+}
+
+static void
+bosh_finish_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  if (!is_debuggable_interrupted (debuggable, "finish"))
+    return;
+  gswat_debuggable_finish (debuggable);
+}
+
+static void
+bosh_continue_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  if (!is_debuggable_interrupted (debuggable, "continue"))
+    return;
+  gswat_debuggable_continue (debuggable);
+}
+
+static void
+bosh_backtrace_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  GQueue *stack = NULL;
+  GList *l;
+  int i;
+
+  if (!is_debuggable_interrupted (debuggable, "backtrace"))
+    return;
+
+  stack = gswat_debuggable_get_stack (GSWAT_DEBUGGABLE (debuggable));
+  for(l = stack->head, i = 0; l; l = l->next, i++)
+    bosh_utils_print_frame (l->data);
+
+  gswat_debuggable_stack_free (stack);
+}
+
+static void
+bosh_frame_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  gulong frame;
+
+  if (!is_debuggable_interrupted (debuggable, "frame"))
+    return;
+
+  if (command)
+    {
+      frame = strtoul (command, NULL, 10);
+      gswat_debuggable_set_frame (debuggable, frame);
+    }
+  else
+    bosh_utils_print_current_frame (debuggable);
+}
+
+static void
+bosh_list_command (char *command, int from_tty)
+{
+  GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+
+  if (!is_debuggable_interrupted (debuggable, "backtrace"))
+    return;
+
+  if (!command)
+    {
+
+    }
+}
+
 void
 bosh_init_commands (void)
 {
@@ -122,7 +231,130 @@ bosh_init_commands (void)
                           "\"run\" command."));
   bosh_command_set_completer (c, filename_completer);
 
+  bosh_add_command ("next", class_run, bosh_next_command,
+                    _("Step program, proceeding through subroutine calls.\n"
+                    "Like the \"step\" command as long as subroutine calls "
+                    "do not happen;\n"
+                    "when they do, the call is treated as one instruction.\n"
+                    "Argument N means do this N times (or till program stops "
+                    "for another reason)."));
+  bosh_add_command_alias ("n", "next", class_run, 1);
+
+  bosh_add_command ("step", class_run, bosh_step_command,
+                    _("Step program until it reaches a different source "
+                      "line.\n"
+                      "Argument N means do this N times (or till program "
+                      "stops for another reason)."));
+  bosh_add_command_alias ("s", "step", class_run, 1);
+
+  bosh_add_command ("finish", class_run, bosh_finish_command,
+                    _("Execute until selected stack frame returns.\n"
+                      "Upon return, the value returned is printed and "
+                      "put in the value history."));
+
+  bosh_add_command ("continue", class_run, bosh_continue_command,
+                    _("Continue program being debugged, after signal or "
+                      "breakpoint.\n"
+                      "If proceeding from breakpoint, a number N may be used "
+                      "as an argument,\n"
+                      "which means to set the ignore count of that breakpoint "
+                      "to N - 1 (so that\n"
+                      "the breakpoint won't break until the Nth time it is "
+                      "reached)."));
+  bosh_add_command_alias ("c", "cont", class_run, 1);
+  bosh_add_command_alias ("fg", "cont", class_run, 1);
+
+  bosh_add_command ("backtrace", class_stack, bosh_backtrace_command,
+                    _("Print backtrace of all stack frames, or innermost "
+                      "COUNT frames.\n"
+                      "With a negative argument, print outermost -COUNT "
+                      "frames.\n"
+                      "Use of the 'full' qualifier also prints the values "
+                      "of the local variables.\n"));
+  bosh_add_command_alias ("bt", "backtrace", class_stack, 0);
+
+  bosh_add_command ("frame", class_stack, bosh_frame_command,
+                    _("Select and print a stack frame.\n"
+                      "With no argument, print the selected stack frame.  "
+                      "(See also \"info frame\").\n"
+                      "An argument specifies the frame to select.\n"
+                      "It can be a stack frame number or the address of the "
+                      "frame.\n"
+                      "With argument, nothing is printed if input is coming "
+                      "from\n"
+                      "a command file or a user-defined command."));
+  bosh_add_command_alias ("f", "frame", class_stack, 1);
+
+  bosh_add_command ("list", class_files, bosh_list_command,
+                    _("List specified function or line.\n"
+                      "With no argument, lists ten more lines after or "
+                      "around previous listing.\n"
+                      "list -\" lists the ten lines before a previous "
+                      "ten-line listing.\n"
+                      "One argument specifies a line, and ten lines are "
+                      "listed around that line.\n"
+                      "Two arguments with comma between specify starting "
+                      "and ending lines to list.\n"
+                      "Lines can be specified in these ways:\n"
+                      "  LINENUM, to list around that line in current file,\n"
+                      "  FILE:LINENUM, to list around that line in that "
+                      "file,\n"
+                      "With two args if one is empty it stands for ten lines "
+                      "away from the other arg."));
+  bosh_add_command_alias ("l", "list", class_files, 1);
+
   bosh_add_command ("quit", class_support, bosh_quit_command, _("Exit bosh."));
   bosh_add_command_alias ("q", "quit", class_support, 1);
+}
+
+void
+bosh_readline_cb (char *user_line)
+{
+  char *line = user_line;
+  struct cmd_list_element *c;
+  int from_tty = 1;
+  char *arg;
+  GError *error = NULL;
+
+  bosh_utils_disable_prompt ();
+
+  /* Repeat the last command if the user simply presses <enter>... */
+  if (strcmp (line, "") == 0 && last_command)
+    {
+      line = last_command;
+      c = bosh_lookup_command (&line, cmdlist, "", 1, &error);
+    }
+  else
+    {
+      /* Save the line for possible repeating later via <enter> later */
+      if (last_command)
+        g_free (last_command);
+      last_command = strdup (user_line);
+      c = bosh_lookup_command (&line, cmdlist, "", 1, &error);
+    }
+
+  if (!c)
+    {
+      bosh_utils_enable_prompt ();
+      return;
+    }
+
+  /* NB: If a command is found line will be updated to point at the first
+   * argument */
+
+  /* Pass null arg rather than an empty one.  */
+  arg = *line ? line : 0;
+
+  if (c->flags & DEPRECATED_WARN_USER)
+    deprecated_cmd_warning (&line);
+
+  if (c->type == set_cmd || c->type == show_cmd)
+    do_setshow_command (arg, from_tty, c);
+  else if (!bosh_command_has_callback (c))
+    g_print (_("That is not a command, just a help topic."));
+  else
+    bosh_command_call (c, arg, from_tty);
+
+  bosh_utils_enable_prompt ();
 }
 

@@ -28,14 +28,15 @@
 
 #include <glib.h>
 #include <glib/gi18n.h>
+#include <gio/gio.h>
 
 #include <gswat/gswat.h>
 
 #include "cli-decode.h"
-#include "cli-setshow.h"
 #include "completer.h"
 
 #include "bosh-commands.h"
+#include "bosh-utils.h"
 
 #ifdef BOSH_ENABLE_DEBUG
 static const GDebugKey bosh_debug_keys[] = {
@@ -56,33 +57,6 @@ GSwatDebuggable *
 bosh_get_default_debuggable (void)
 {
   return _bosh_current_debuggable;
-}
-
-static void
-bosh_readline_cb (char *line)
-{
-  struct cmd_list_element *c;
-  int from_tty = 1;
-  char *arg;
-
-  /* NB: If a command is found line will be updated to point at the first
-   * argument */
-  c = lookup_cmd (&line, cmdlist, "", 0, 1);
-  if (!c)
-    return;
-
-  /* Pass null arg rather than an empty one.  */
-  arg = *line ? line : 0;
-
-  if (c->flags & DEPRECATED_WARN_USER)
-    deprecated_cmd_warning (&line);
-
-  if (c->type == set_cmd || c->type == show_cmd)
-    do_setshow_command (arg, from_tty, c);
-  else if (!bosh_command_has_callback (c))
-    g_print (_("That is not a command, just a help topic."));
-  else
-    bosh_command_call (c, arg, from_tty);
 }
 
 gboolean
@@ -243,41 +217,45 @@ bosh_disable_g_log (void)
 static void
 on_stack_change (GObject *debuggable, GParamSpec *pspec, gpointer data)
 {
-  static GQueue *stack = NULL;
-  GList *l;
-  int i;
+}
 
-  if (stack)
-    gswat_debuggable_stack_free (stack);
+static void
+on_source_uri_change (GObject *object, GParamSpec *pspec, gpointer data)
+{
+#if 0
+  GSwatDebuggable *debuggable = GSWAT_DEBUGGABLE (object);
+  char *uri = gswat_debuggable_get_source_uri (debuggable);
+  gint line = gswatt_debuggable_get_source_line (debuggable);
+  print_file_range (uri, line, line);
+  g_free (uri);
+#endif
+}
 
-  g_print ("\n");
-  stack = gswat_debuggable_get_stack (GSWAT_DEBUGGABLE (debuggable));
-  for(l = stack->head, i = 0; l; l = l->next, i++)
+static void
+on_source_line_change (GObject *object, GParamSpec *pspec, gpointer data)
+{
+  GSwatDebuggable *debuggable = GSWAT_DEBUGGABLE (object);
+  char *uri = gswat_debuggable_get_source_uri (debuggable);
+  gint line = gswat_debuggable_get_source_line (debuggable);
+
+  if (uri)
     {
-      GSwatDebuggableFrame *frame;
-      GSwatDebuggableFrameArgument *arg;
-      GList *l2;
-      GString *args = g_string_new ("");
-
-      frame = (GSwatDebuggableFrame *)l->data;
-
-      /* note: at this point the list is in reverse,
-       * so the last in the list is our current frame
-       */
-      g_print ("%d) %s (", i, frame->function);
-
-      for(l2 = frame->arguments; l2; l2 = l2->next)
-        {
-          arg = (GSwatDebuggableFrameArgument *)l2->data;
-          g_string_append_printf (args, "%s=%s, ", arg->name, arg->value);
-        }
-
-      if(args->str[args->len - 2] == ',')
-        args = g_string_truncate (args, args->len - 2);
-
-      g_print ("%s)\n", args->str);
-      g_string_free (args, TRUE);
+      bosh_utils_print_file_range (uri, line, line);
+      g_free (uri);
     }
+
+  bosh_utils_print_current_frame (debuggable);
+}
+
+static void
+on_state_change (GObject *object, GParamSpec *pspec, gpointer data)
+{
+  GSwatDebuggable *debuggable = GSWAT_DEBUGGABLE (object);
+  GSwatDebuggableState state = gswat_debuggable_get_state (debuggable);
+  if (state == GSWAT_DEBUGGABLE_RUNNING)
+    bosh_utils_disable_prompt ();
+  else
+    bosh_utils_enable_prompt ();
 }
 
 int
@@ -301,7 +279,7 @@ main (int argc, char **argv)
   bosh_init_commands ();
 
   rl_completion_entry_function = bosh_readline_line_completion_function;
-  rl_callback_handler_install ("(bosh) ", bosh_readline_cb);
+  bosh_utils_enable_prompt ();
 
   g_io_add_watch (input, G_IO_IN, input_available_cb, NULL);
 
@@ -312,6 +290,20 @@ main (int argc, char **argv)
   g_signal_connect (G_OBJECT (_bosh_current_debuggable),
                     "notify::stack",
                     G_CALLBACK (on_stack_change),
+                    NULL);
+
+  g_signal_connect (G_OBJECT (_bosh_current_debuggable),
+                   "notify::source-uri",
+                    G_CALLBACK (on_source_uri_change),
+                    NULL);
+  g_signal_connect (G_OBJECT (_bosh_current_debuggable),
+                   "notify::source-line",
+                    G_CALLBACK (on_source_line_change),
+                    NULL);
+
+  g_signal_connect (G_OBJECT (_bosh_current_debuggable),
+                   "notify::state",
+                    G_CALLBACK (on_state_change),
                     NULL);
 
   g_main_loop_run (loop);

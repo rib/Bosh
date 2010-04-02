@@ -7,7 +7,8 @@ bosh_SOURCES = cli/cli-decode.c \
 	       cli/symtab.c \
 	       cli/completer.c \
 	       bosh-main.c \
-	       bosh-commands.c
+	       bosh-commands.c \
+	       bosh-utils.c
 
 #	       cli/cli-dump.c \
 #	       cli/cli-logging.c \

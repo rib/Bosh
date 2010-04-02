@@ -31,8 +31,6 @@
 
 /* Prototypes for local functions */
 
-static void undef_cmd_error (char *, char *);
-
 static struct cmd_list_element *find_cmd (char *command,
 					  int len,
 					  struct cmd_list_element *clist,
@@ -44,6 +42,12 @@ static void help_all (GIOChannel *stream);
 static void
 print_help_for_command (struct cmd_list_element *c, char *prefix, int recurse,
 			GIOChannel *stream);
+
+GQuark
+bosh_command_error_quark (void)
+{
+  return g_quark_from_static_string ("bosh-command-error-quark");
+}
 
 
 /* Set the callback function for the specified command.  For each both
@@ -107,33 +111,32 @@ bosh_command_set_completer (struct cmd_list_element *cmd,
   cmd->completer = completer; /* Ok.  */
 }
 
-
-/* Add element named NAME.
-   CLASS is the top level category into which commands are broken down
-   for "help" purposes.
-   FUN should be the function to execute the command;
-   it will get a character string as argument, with leading
-   and trailing blanks already eliminated.
-
-   DOC is a documentation string for the command.
-   Its first line should be a complete sentence.
-   It should start with ? for a command that is an abbreviation
-   or with * for a command that most users don't need to know about.
-
-   Add this command to command list *LIST.
-
-   Returns a pointer to the added command (not necessarily the head
-   of *LIST). */
-
+/* bosh_command_list_add:
+ * list: The list of commands you want to add your command to
+ * name: The name of your new command
+ * class: The top level category for this command. Classes are how
+ *        commands are broken down for "help" purposes.
+ * callback: A callback for when the user issues this command. It will
+ *           get a character string as argument, with leading and
+ *           trailing blanks already eliminated.
+ * doc: A documentation string for this new command. Its first line
+ *      should be a complete sentence. It should start with ? for a
+ *      command that is an abbreviation or with * for a command that
+ *      most users don't need to know about.
+ *
+ * Adds a new command element named @name to the given command @list.
+ *
+ * Returns: A pointer to the added command (not necessarily the head
+ * of @list)
+ */
 struct cmd_list_element *
 bosh_command_list_add (struct cmd_list_element **list,
                        char *name,
                        enum command_class class,
-                       void (*fun) (char *, int),
+                       void (*callback) (char *, int),
                        char *doc)
 {
-  struct cmd_list_element *c
-  = (struct cmd_list_element *) g_malloc (sizeof (struct cmd_list_element));
+  struct cmd_list_element *c = g_malloc (sizeof (struct cmd_list_element));
   struct cmd_list_element *p;
 
   delete_cmd (name, list);
@@ -156,7 +159,7 @@ bosh_command_list_add (struct cmd_list_element **list,
 
   c->name = name;
   c->class = class;
-  bosh_command_set_callback (c, fun);
+  bosh_command_set_callback (c, callback);
   bosh_command_set_context (c, NULL);
   c->doc = doc;
   c->flags = 0;
@@ -182,27 +185,32 @@ bosh_command_list_add (struct cmd_list_element **list,
   return c;
 }
 
-/* Deprecates a command CMD.
-   REPLACEMENT is the name of the command which should be used in place
-   of this command, or NULL if no such command exists.
-
-   This function does not check to see if command REPLACEMENT exists
-   since gdb may not have gotten around to adding REPLACEMENT when this
-   function is called.
-
-   Returns a pointer to the deprecated command.  */
-
+/**
+ * bosh_command_deprecate:
+ * command: The command you want to deprecate
+ * replacement: The replacement name for the command
+ *
+ * Deprecates @command and specifies the @replacement that should be used
+ * instead; or NULL if no replacement exists.
+ *
+ * This function does not check to see if the @replacement command exists
+ * as you may not have gotten around to adding @replacement which this
+ * function is called.
+ *
+ * Returns: a pointer to the deprecated command.
+ */
 struct cmd_list_element *
-deprecate_cmd (struct cmd_list_element *cmd, char *replacement)
+bosh_command_deprecate (struct cmd_list_element *command,
+                        char *replacement)
 {
-  cmd->flags |= (CMD_DEPRECATED | DEPRECATED_WARN_USER);
+  command->flags |= (CMD_DEPRECATED | DEPRECATED_WARN_USER);
 
   if (replacement != NULL)
-    cmd->replacement = replacement;
+    command->replacement = replacement;
   else
-    cmd->replacement = NULL;
+    command->replacement = NULL;
 
-  return cmd;
+  return command;
 }
 
 struct cmd_list_element *
@@ -218,13 +226,10 @@ bosh_command_list_add_alias (struct cmd_list_element **list,
   struct cmd_list_element *c;
   copied_name = (char *) alloca (strlen (oldname) + 1);
   strcpy (copied_name, oldname);
-  old = lookup_cmd (&copied_name, *list, "", 1, 1);
 
-  if (old == 0)
-    {
-      delete_cmd (name, list);
-      return 0;
-    }
+  old = bosh_lookup_command (&copied_name, *list, "", 1, NULL);
+  if (old == NULL)
+    return NULL;
 
   c = bosh_command_list_add (list, name, class, NULL, old->doc);
   /* NOTE: Both FUNC and all the FUNCTIONs need to be copied.  */
@@ -750,8 +755,7 @@ help_cmd (char *command, GIOChannel *stream)
       return;
     }
 
-  c = lookup_cmd (&command, cmdlist, "", 0, 0);
-
+  c = bosh_lookup_command (&command, cmdlist, "", 0, NULL);
   if (c == 0)
     return;
 
@@ -1063,21 +1067,22 @@ find_command_name_length (const char *text)
    at the prefix_command (ie. the best match) *or* (special case) will be NULL
    if no prefix command was ever found.  For example, in the case of "info a",
    "info" matches without ambiguity, but "a" could be "args" or "address", so
- *RESULT_LIST is set to the cmd_list_element for "info".  So in this case
- RESULT_LIST should not be interpeted as a pointer to the beginning of a
- list; it simply points to a specific command.  In the case of an ambiguous
- return *TEXT is advanced past the last non-ambiguous prefix (e.g.
- "info t" can be "info types" or "info target"; upon return *TEXT has been
- advanced past "info ").
+   *RESULT_LIST is set to the cmd_list_element for "info".  So in this case
+   RESULT_LIST should not be interpeted as a pointer to the beginning of a
+   list; it simply points to a specific command.  In the case of an ambiguous
+   return *TEXT is advanced past the last non-ambiguous prefix (e.g.  "info t"
+   can be "info types" or "info target"; upon return *TEXT has been advanced
+   past "info ").
 
- If RESULT_LIST is NULL, don't set *RESULT_LIST (but don't otherwise
- affect the operation).
+   If RESULT_LIST is NULL, don't set *RESULT_LIST (but don't otherwise
+   affect the operation).
 
- This routine does *not* modify the text pointed to by TEXT.
+   This routine does *not* modify the text pointed to by TEXT.
 
- If IGNORE_HELP_CLASSES is nonzero, ignore any command list elements which
- are actually help classes rather than commands (i.e. the function field of
- the struct cmd_list_element is NULL).  */
+   If IGNORE_HELP_CLASSES is nonzero, ignore any command list elements which
+   are actually help classes rather than commands (i.e. the function field of
+   the struct cmd_list_element is NULL).
+*/
 
 struct cmd_list_element *
 lookup_cmd_1 (char **text, struct cmd_list_element *clist,
@@ -1203,69 +1208,72 @@ lookup_cmd_1 (char **text, struct cmd_list_element *clist,
 /* All this hair to move the space to the front of cmdtype */
 
 static void
-undef_cmd_error (char *cmdtype, char *q)
+set_undefined_error (GError **error, char *cmdtype, char *command)
 {
-  g_print (_("Undefined %scommand: \"%s\".  Try \"help%s%.*s\".\n"),
-           cmdtype,
-           q,
-           *cmdtype ? " " : "",
-           (int) strlen (cmdtype) - 1,
-           cmdtype);
+  g_set_error (error,
+               BOSH_COMMAND_ERROR,
+               BOSH_COMMAND_ERROR_UNDEFINED,
+               _("Undefined %scommand: \"%s\".  Try \"help%s%.*s\".\n"),
+               cmdtype,
+               command,
+               *cmdtype ? " " : "",
+               (int) strlen (cmdtype) - 1,
+               cmdtype);
 }
 
-/* Look up the contents of *LINE as a command in the command list LIST.
-   LIST is a chain of struct cmd_list_element's.
-   If it is found, return the struct cmd_list_element for that command
-   and update *LINE to point after the command name, at the first argument.
-   If not found, call error if ALLOW_UNKNOWN is zero
-   otherwise (or if error returns) return zero.
-   Call error if specified command is ambiguous,
-   unless ALLOW_UNKNOWN is negative.
-   CMDTYPE precedes the word "command" in the error message.
-
-   If INGNORE_HELP_CLASSES is nonzero, ignore any command list
-   elements which are actually help classes rather than commands (i.e.
-   the function field of the struct cmd_list_element is 0).  */
-
+/* bosh_lookup_command:
+ * line: A line of user input
+ * list: A list of commands to compare the user input against
+ * cmdtype: ???
+ * ignore_help_classes: Don't consider help only commands
+ * error: A GError for reporting exceptions
+ *
+ * Looks up the contents of @line as a command in the command @list.
+ * @list is a chain of struct cmd_list_element's. If it is found, return
+ * the struct #cmd_list_element for that command and update *@line to point
+ * after the command name, at the first argument. If not found, return
+ * NULL and set @error to an appropriate GError.
+ *
+ * If INGNORE_HELP_CLASSES is nonzero, ignore any command list
+ * elements which are actually help classes rather than commands (i.e.
+ * the function field of the struct cmd_list_element is 0).
+ *
+ * Any errors will be reported using the BOSH_COMMAND_ERROR domain and
+ * may have a code of BOSH_COMMAND_ERROR_UNDEFINED or
+ * BOSH_COMMAND_ERROR_AMBIGUOUS.
+ *
+ * Returns: A pointer to a struct #cmd_list_element corresponding to the
+ *          users given command or NULL and sets an appripriate @error.
+ */
 struct cmd_list_element *
-lookup_cmd (char **line, struct cmd_list_element *list, char *cmdtype,
-            int allow_unknown, int ignore_help_classes)
+bosh_lookup_command (char **line,
+                     struct cmd_list_element *list,
+                     char *cmdtype,
+                     int ignore_help_classes,
+                     GError **error)
 {
   struct cmd_list_element *last_list = 0;
   struct cmd_list_element *c;
 
+  g_return_val_if_fail (*line, NULL);
+
   /* Note: Do not remove trailing whitespace here because this
      would be wrong for complete_command.  Jim Kingdon  */
 
-  if (!*line)
-    {
-      g_print (_("Lack of needed %scommand"), cmdtype);
-      return 0;
-    }
-
   c = lookup_cmd_1 (line, list, &last_list, ignore_help_classes);
-
   if (!c)
     {
-      if (!allow_unknown)
-        {
-          char *q;
-          int len = find_command_name_length (*line);
-
-          q = (char *) alloca (len + 1);
-          strncpy (q, *line, len);
-          q[len] = '\0';
-          undef_cmd_error (cmdtype, q);
-        }
-      else
-        return 0;
+      int len = find_command_name_length (*line);
+      char *command = g_strdup_printf ("%.*s", len, *line);
+      set_undefined_error (error, cmdtype, command);
+      g_free (command);
+      return NULL;
     }
   else if (c == (struct cmd_list_element *) -1)
     {
       /* Ambigous.  Local values should be off prefixlist or called
          values.  */
-      int local_allow_unknown = (last_list ? last_list->allow_unknown :
-                                 allow_unknown);
+      int local_allow_unknown = (last_list ? last_list->allow_unknown : 0);
       char *local_cmdtype = last_list ? last_list->prefixname : cmdtype;
       struct cmd_list_element *local_list =
         (last_list ? *(last_list->prefixlist) : list);
@@ -1275,39 +1283,36 @@ lookup_cmd (char **line, struct cmd_list_element *list, char *cmdtype,
           if (last_list)
             return last_list;	/* Found something.  */
           else
-            return 0;		/* Found nothing.  */
+            return NULL;	/* Found nothing.  */
         }
       else
         {
-          /* Report as error.  */
-          int amb_len;
-          char ambbuf[100];
+          /* Report as error. */
+          int ambiguous_len;
+          GString *ambiguous_buf = g_string_new ("");
 
-          for (amb_len = 0;
-               ((*line)[amb_len] && (*line)[amb_len] != ' '
-                && (*line)[amb_len] != '\t');
-               amb_len++)
+          for (ambiguous_len = 0;
+               ((*line)[ambiguous_len] && (*line)[ambiguous_len] != ' '
+                && (*line)[ambiguous_len] != '\t');
+               ambiguous_len++)
             ;
 
-          ambbuf[0] = 0;
           for (c = local_list; c; c = c->next)
-            if (!strncmp (*line, c->name, amb_len))
+            if (!strncmp (*line, c->name, ambiguous_len))
               {
-                if (strlen (ambbuf) + strlen (c->name) + 6 < (int) sizeof ambbuf)
-                  {
-                    if (strlen (ambbuf))
-                      strcat (ambbuf, ", ");
-                    strcat (ambbuf, c->name);
-                  }
-                else
-                  {
-                    strcat (ambbuf, "..");
-                    break;
-                  }
+                if (ambiguous_buf->len)
+                  ambiguous_buf = g_string_append (ambiguous_buf, ", ");
+                ambiguous_buf = g_string_append (ambiguous_buf, c->name);
               }
-          g_print (_("Ambiguous %scommand \"%s\": %s."), local_cmdtype,
-                   *line, ambbuf);
-          return 0;		/* lint */
+
+          g_set_error (error,
+                       BOSH_COMMAND_ERROR,
+                       BOSH_COMMAND_ERROR_AMBIGUOUS,
+                       "Ambiguous %scommand \"%s\": %s.",
+                       local_cmdtype, *line, ambiguous_buf->str);
+          g_string_free (ambiguous_buf, TRUE);
+
+          return NULL;
         }
     }
   else
@@ -1318,12 +1323,16 @@ lookup_cmd (char **line, struct cmd_list_element *list, char *cmdtype,
         (*line)++;
 
       if (c->prefixlist && **line && !c->allow_unknown)
-        undef_cmd_error (c->prefixname, *line);
+        {
+          set_undefined_error (error, c->prefixname, *line);
+          return NULL;
+        }
 
       /* Seems to be what he wants.  Return it.  */
       return c;
     }
-  return 0;
+
+  return NULL;
 }
 
 /* We are here presumably because an alias or command in *TEXT is

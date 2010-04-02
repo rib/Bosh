@@ -28,4 +28,6 @@ void bosh_init_commands (void);
 
 void bosh_command_error_no_argument (char *why);
 
+void bosh_readline_cb (char *line);
+
 #endif /* !defined (CLI_CMDS_H) */
