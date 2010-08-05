@@ -105,7 +105,7 @@ static GOptionEntry bosh_args[] = {
         N_("Bosh debugging flags to unset"), "FLAGS" },
 #endif /* BOSH_ENABLE_DEBUG */
       { "pid", 0, G_OPTION_FLAG_OPTIONAL_ARG, G_OPTION_ARG_INT, &pid,
-	 "Attach to running process PIDAttach to running process PID", NULL },
+	 "Attach to running process PID", NULL },
       { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &remaining_args,
         "[executable-file [core-file or process-id]]" },
       { NULL, },
