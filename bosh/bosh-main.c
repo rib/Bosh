@@ -20,11 +20,13 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
+#include <config.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <config.h>
 #include <readline/readline.h>
+#include <string.h>
 
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -50,6 +52,8 @@ guint bosh_debug_flags;
 
 static gint pid = -1;
 static gchar **remaining_args = NULL;
+static int signal_pipe[2];
+
 GSwatDebuggable *_bosh_current_debuggable;
 
 
@@ -258,6 +262,37 @@ on_state_change (GObject *object, GParamSpec *pspec, gpointer data)
     bosh_utils_enable_prompt ();
 }
 
+static gboolean
+signal_handler (GIOChannel *source,
+                GIOCondition condition,
+                void *data)
+{
+  char buf[4096];
+
+  read (signal_pipe[0], buf, 4096);
+  if (strcmp (buf, "SIGINT") == 0)
+    {
+      rl_free_line_state ();
+      bosh_utils_disable_prompt ();
+      g_print ("Interrupt (type 'quit' to exit bosh)\n");
+      bosh_utils_enable_prompt ();
+    }
+  return TRUE;
+}
+
+void
+report_signal (int signal)
+{
+  switch (signal)
+    {
+    case SIGINT:
+      write (signal_pipe[1], "SIGINT", 6);
+      break;
+    default:
+      break;
+    }
+}
+
 int
 main (int argc, char **argv)
 {
@@ -267,7 +302,10 @@ main (int argc, char **argv)
     "Find out how to contribute @ http://fixme.org\n"
     "\n";
   GSwatSession *session;
+  GIOChannel *signal_reciever;
+  struct sigaction signal_action;
 
+  rl_catch_signals = 0;
   g_type_init ();
   gswat_init (&argc, &argv);
 
@@ -305,6 +343,15 @@ main (int argc, char **argv)
                    "notify::state",
                     G_CALLBACK (on_state_change),
                     NULL);
+
+  pipe (signal_pipe);
+
+  signal_reciever = g_io_channel_unix_new (signal_pipe[0]);
+  g_io_add_watch (signal_reciever, G_IO_IN, signal_handler, NULL);
+
+  signal_action.sa_handler = report_signal;
+  signal_action.sa_flags = 0;
+  sigaction (SIGINT, &signal_action, NULL);
 
   g_main_loop_run (loop);
 
