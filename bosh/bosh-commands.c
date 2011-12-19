@@ -41,6 +41,8 @@ struct cmd_list_element *infolist;
 
 static char *last_command = NULL;
 
+static int list_position = -1;
+
 /* Utility used everywhere when at least one argument is needed and
    none is supplied. */
 
@@ -170,6 +172,8 @@ bosh_frame_command (char *command, int from_tty)
   if (!is_debuggable_interrupted (debuggable, "frame"))
     return;
 
+  list_position = -1;
+
   if (command)
     {
       frame = strtoul (command, NULL, 10);
@@ -183,13 +187,52 @@ static void
 bosh_list_command (char *command, int from_tty)
 {
   GSwatDebuggable *debuggable = bosh_get_default_debuggable ();
+  char *uri;
+  int line;
+  int progress_direction = 1;
 
   if (!is_debuggable_interrupted (debuggable, "backtrace"))
     return;
 
-  if (!command)
+  /* XXX: We currently only support lines specified as:
+   * -
+   * LINE
+   * FILE:LINE
+   */
+  if (command)
     {
+      if (*command == '-')
+        progress_direction = -1;
+      else
+        {
+          char **strv = g_strsplit (command, ':', -1);
+          if (strv[0] && strv[1])
+            {
+              uri = gswat_debuggable_get_uri_for_file (debuggable, strv[0]);
+              list_position = strtoul (strv[1], &endptr, 10);
+              if (endptr == strv[0])
+                list_position = -1;
+            }
+          else
+            list_position = strtoul (strv[0], &endptr, 10);
+          g_strfreev (strv);
+        }
+    }
+  else
+    uri = gswat_debuggable_get_source_uri (debuggable);
 
+  if (list_position == -1)
+    line = gswat_debuggable_get_source_line (debuggable);
+  else
+    line = list_position;
+
+  if (uri)
+    {
+      if (line >= 5)
+        line -= 5;
+      if (bosh_utils_print_file_range (uri, line, line + 10))
+        list_position = line + 10 * progress_direction;
+      g_free (uri);
     }
 }
 
@@ -197,6 +240,30 @@ void
 bosh_init_commands (void)
 {
   struct cmd_list_element *c;
+
+  bosh_add_command ("aliases", class_alias, NULL,
+                    _("Aliases of other commands."));
+  bosh_add_command ("files", class_files, NULL,
+                    _("Specifying and examining files."));
+  bosh_add_command ("breakpoints", class_breakpoint, NULL,
+                    _("Making program stop at certain points."));
+  bosh_add_command ("data", class_vars, NULL, _("Examining data."));
+  bosh_add_command ("stack", class_stack, NULL,
+                    _("Examining the stack.\n"
+                      "The stack is made up of stack frames.  Gdb assigns "
+                      "numbers to stack frames\n"
+                      "counting from zero for the innermost (currently "
+                      "executing) frame.\n\n"
+                      "At any time gdb identifies one frame as the "
+                      "\"selected\" frame.\n"
+                      "Variable lookups are done with respect to the selected "
+                      "frame.\n"
+                      "When the program being debugged stops, gdb selects the "
+                      "innermost frame.\n"
+                      "The commands below can be used to select other frames "
+                      "by number or address."));
+  bosh_add_command ("running", class_run, NULL,
+                    _("Running the program."));
 
   c = bosh_add_command ("help", class_support, bosh_help_command,
                         _("Print list of commands."));

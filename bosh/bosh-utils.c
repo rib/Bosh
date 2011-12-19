@@ -47,7 +47,7 @@ bosh_utils_enable_prompt (void)
     rl_callback_handler_install ("(bosh) ", bosh_readline_cb);
 }
 
-void
+gboolean
 bosh_utils_print_file_range (const char *uri, gint start, gint end)
 {
   GFile *file = g_file_new_for_uri (uri);
@@ -58,9 +58,9 @@ bosh_utils_print_file_range (const char *uri, gint start, gint end)
 
   if (!(stream = g_file_read (file, NULL, &error)))
     {
-      g_print ("Failed to open source file %s", error->message);
+      g_print ("Failed to open source file %s: %s", uri, error->message);
       g_error_free (error);
-      return;
+      return FALSE;
     }
 
   data_stream =
@@ -75,16 +75,20 @@ bosh_utils_print_file_range (const char *uri, gint start, gint end)
       gsize len = 0;
       char *line =
         g_data_input_stream_read_line (data_stream, &len, NULL, &error);
-      if (!line)
+      if (error)
         {
           g_print ("Error reading source file %s: %s\n", uri, error->message);
-          g_error_free (error);
+          return FALSE;
         }
+      if (!line)
+        return FALSE;
       if (i >= start && i <=end)
         g_print ("%-4d %s\n", i, line);
       else if (i > end)
         break;
     }
+
+  return TRUE;
 }
 
 void
@@ -124,7 +128,9 @@ void
 bosh_utils_print_current_frame (GSwatDebuggable *debuggable)
 {
   GQueue *stack = gswat_debuggable_get_stack (debuggable);
-  bosh_utils_print_frame (stack->head->data);
+  GSwatDebuggableFrame *frame = stack->head->data;
+  bosh_utils_print_frame (frame);
+  bosh_utils_print_file_range (frame->source_uri, frame->line, frame->line);
   gswat_debuggable_stack_free (stack);
 }
 
